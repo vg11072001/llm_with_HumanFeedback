@@ -1,0 +1,10 @@
+kaggle
+kagglehub
+huggingface_hub
+detectron2==0.6
+transformers==4.43.3
+datasets==2.19.0
+flash-attn==2.6.2
+optimi==0.2.1
+fvcore
+triton
