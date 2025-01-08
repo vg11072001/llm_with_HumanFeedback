@@ -1,4 +1,4 @@
-# LLM that Listens and Learns
+# Benchmarking gemma2-9b Efficiency Across Fine-Tuning Techniques
 
 <!-- ![Cute roots](asset/assest1.svg) -->
 ![c](asset/frontbanner.png)
