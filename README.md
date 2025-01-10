@@ -5,7 +5,7 @@
 <!-- ![c](asset/frontbanner.svg) -->
 
 ## Contents
-- [LLM that Listens and Learns](#llm-that-listens-and-learns)
+- [Benchmarking gemma2-9b Efficiency Across Fine-Tuning Techniques](#benchmarking-gemma2-9b-efficiency-across-fine-tuning-techniques)
   - [Contents](#contents)
     - [Experiments list](#experiments-list)
   - [Inspiration](#inspiration)
@@ -16,7 +16,7 @@
 
 - [ ] document full chart and finesetup and inference setup on local
 - [ ] Model architecture:
-  - [ ] Gemma2-9b and Llama3-8B LLMs from scratch for small dataset
+  - [ ] Gemma2-9b LLMs from scratch for small dataset
   - [ ] alternative for Collators used in model its have some limitations
 <!-- 
   - [ ] Gemma 2 Fine Tuning for Dummies (with 16k, 32k,... Context) [Full Tutorial] [link](https://www.youtube.com/watch?v=EE-nEecm3Wo)
