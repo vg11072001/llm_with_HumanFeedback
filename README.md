@@ -40,5 +40,5 @@
 
 ## Inspiration
 
-- The dataset to explore [Competition](https://www.kaggle.com/competitions/lmsys-chatbot-arena)
-- I took this repository from [tascj/kaggle-lmsys-chatbot-arena-post](https://www.kaggle.com/competitions/lmsys-chatbot-arena/discussion/527685), to explore some functionality.
+- The dataset to explore [Competition](https://www.kaggle.com/competitions/lmsys-chatbot-arena) and multiple sources from Huggin Face
+- Some techniques inspired form here [tascj/kaggle-lmsys-chatbot-arena-post](https://www.kaggle.com/competitions/lmsys-chatbot-arena/discussion/527685) winner's solutions.
