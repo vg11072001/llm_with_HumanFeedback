@@ -82,7 +82,7 @@ betweenaUserandtwoAssistants|><end_of_turn><start_of_turn>modelverdictis:[[
 
 How . Why . What. Alternative
 
-```json
+```python
 Gemma2ForSequenceClassification
 (
   (model): Gemma2Model
@@ -162,7 +162,7 @@ key_states = te.attention.FusedRoPEFunc.apply(key_states, rotary_emb, "thd",
 
 #instead of Gemma2SdpaAttention:
 
-```json
+```python
 (self_attn): Gemma2SdpaAttention(
           (q_proj): Linear(in_features=3584, out_features=4096, bias=False)
           (k_proj): Linear(in_features=3584, out_features=2048, bias=False)
