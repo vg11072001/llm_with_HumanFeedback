@@ -23,14 +23,11 @@ from torch import nn
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache
 from transformers.modeling_utils import PreTrainedModel
-from transformers.utils import (
-    add_start_docstrings,
-    add_start_docstrings_to_model_forward,
-    logging,
-)
+from transformers.utils import add_start_docstrings, add_start_docstrings_to_model_forward, logging
+
 from transformers.models.gemma2.configuration_gemma2 import Gemma2Config
 
-
+import transformer_engine
 import transformer_engine.pytorch as te
 from flash_attn import flash_attn_varlen_func
 
@@ -86,7 +83,6 @@ class Gemma2MLP(nn.Module):
         # fc1_out = torch.cat((self.gate_proj(x), self.up_proj(x)), dim=-1)
         return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
 
-
 class Gemma2Attention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
@@ -94,12 +90,11 @@ class Gemma2Attention(nn.Module):
         super().__init__()
         self.config = config
         self.layer_idx = layer_idx
+        
         if layer_idx is None:
-            logger.warning_once(
-                f"Instantiating {self.__class__.__name__} without passing a `layer_idx` is not recommended and will "
+            logger.warning_once(f"Instantiating {self.__class__.__name__} without passing a `layer_idx` is not recommended and will "
                 "lead to errors during the forward call if caching is used. Please make sure to provide a `layer_idx` "
-                "when creating this class."
-            )
+                "when creating this class.")
 
         self.attention_dropout = config.attention_dropout
         self.hidden_size = config.hidden_size
@@ -109,31 +104,18 @@ class Gemma2Attention(nn.Module):
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
         self.max_position_embeddings = config.max_position_embeddings
         self.rope_theta = config.rope_theta
-        self.is_causal = True
+        self.is_causal = True 
         self.scaling = config.query_pre_attn_scalar**-0.5
 
         if self.hidden_size % self.num_heads != 0:
-            raise ValueError(
-                f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
-                f" and `num_heads`: {self.num_heads})."
-            )
+            raise ValueError(f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
+                            f" and `num_heads`: {self.num_heads}).")
 
-        self.q_proj = nn.Linear(
-            self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias
-        )
-        self.k_proj = nn.Linear(
-            self.hidden_size,
-            self.num_key_value_heads * self.head_dim,
-            bias=config.attention_bias,
-        )
-        self.v_proj = nn.Linear(
-            self.hidden_size,
-            self.num_key_value_heads * self.head_dim,
-            bias=config.attention_bias,
-        )
-        self.o_proj = nn.Linear(
-            self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias
-        )
+        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias)
+        self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
+        self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
+        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
+        
         # disable sliding window in case T4 sdpa implementation does not support it
         # our max input length is slightly longer than 4096
         if self.config.sliding_window == -1:
@@ -141,13 +123,8 @@ class Gemma2Attention(nn.Module):
         else:
             self.sliding_window = config.sliding_window if not bool(layer_idx % 2) else None
 
-    def forward(
-        self,
-        hidden_states,
-        cu_seqlens,
-        rotary_emb,
-        is_last_decoder_layer=False,
-    ):
+    def forward(self, hidden_states, cu_seqlens, rotary_emb, is_last_decoder_layer=False):
+        
         q_len, _ = hidden_states.size()
 
         query_states = self.q_proj(hidden_states)
@@ -159,24 +136,17 @@ class Gemma2Attention(nn.Module):
         value_states = value_states.view(q_len, self.num_key_value_heads, self.head_dim)
 
         # cos, sin = self.rotary_emb(value_states, position_ids)
-        # query_states, key_states = apply_rotary_pos_emb(
-        #     query_states, key_states, cos, sin
-        # )
-        query_states = te.attention.FusedRoPEFunc.apply(
-            query_states, rotary_emb, "thd", cu_seqlens
-        )
-        key_states = te.attention.FusedRoPEFunc.apply(
-            key_states, rotary_emb, "thd", cu_seqlens
-        )
+        # query_states, key_states = apply_rotary_pos_emb( query_states, key_states, cos, sin )
+        
+        query_states = te.attention.FusedRoPEFunc.apply(query_states, rotary_emb, "thd", cu_seqlens)
+        key_states = te.attention.FusedRoPEFunc.apply(key_states, rotary_emb, "thd", cu_seqlens)
 
         max_seqlen = (cu_seqlens[1:] - cu_seqlens[:-1]).amax()
         if is_last_decoder_layer:
             # pool on last layer Q
             last_token_inds = cu_seqlens[1:] - 1
             query_states = query_states[last_token_inds]
-            cu_seqlens_q = torch.arange(
-                query_states.size(0) + 1, device=query_states.device, dtype=torch.int32
-            )
+            cu_seqlens_q = torch.arange(query_states.size(0) + 1, device=query_states.device, dtype=torch.int32)
             max_seqlen_q = 1
             q_len = query_states.size(0)
             causal = False
@@ -220,46 +190,30 @@ class Gemma2DecoderLayer(nn.Module):
         self.self_attn = Gemma2Attention(config=config, layer_idx=layer_idx)
 
         self.mlp = Gemma2MLP(config)
-        self.input_layernorm = Gemma2RMSNorm(
-            config.hidden_size, eps=config.rms_norm_eps
-        )
-        self.post_attention_layernorm = Gemma2RMSNorm(
-            config.hidden_size, eps=config.rms_norm_eps
-        )
+        self.input_layernorm = Gemma2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = Gemma2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         self.is_sliding = not bool(layer_idx % 2)
-        self.pre_feedforward_layernorm = Gemma2RMSNorm(
-            config.hidden_size, eps=config.rms_norm_eps
-        )
-        self.post_feedforward_layernorm = Gemma2RMSNorm(
-            config.hidden_size, eps=config.rms_norm_eps
-        )
+        self.pre_feedforward_layernorm = Gemma2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_feedforward_layernorm = Gemma2RMSNorm(config.hidden_size, eps=config.rms_norm_eps )
         self.sliding_window = config.sliding_window
 
-    def forward(
-        self,
-        hidden_states,
-        cu_seqlens,
-        rotary_emb,
-        is_last_decoder_layer=False,
-    ):
+    def forward( self, hidden_states, cu_seqlens, rotary_emb, is_last_decoder_layer=False):
         residual = hidden_states
 
         hidden_states = self.input_layernorm(hidden_states)
 
         # Self Attention
-        hidden_states = self.self_attn(
-            hidden_states,
-            cu_seqlens,
-            rotary_emb,
-            is_last_decoder_layer=is_last_decoder_layer,
-        )
+        hidden_states = self.self_attn(hidden_states, cu_seqlens, rotary_emb, is_last_decoder_layer=is_last_decoder_layer)
         hidden_states = self.post_attention_layernorm(hidden_states)
+        
         if is_last_decoder_layer:
             last_token_inds = cu_seqlens[1:] - 1
             residual = residual[last_token_inds]
+        
         hidden_states = residual + hidden_states
 
+        # MLP layers
         residual = hidden_states
         hidden_states = self.pre_feedforward_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
@@ -312,6 +266,7 @@ class Gemma2PreTrainedModel(PreTrainedModel):
         elif isinstance(module, nn.Embedding):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.padding_idx is not None:
+                #! padding index if present fill it with zero
                 module.weight.data[module.padding_idx].zero_()
 
 
@@ -393,9 +348,8 @@ GEMMA2_INPUTS_DOCSTRING = r"""
 
 
 @add_start_docstrings(
-    "The bare Gemma2 Model outputting raw hidden-states without any specific head on top.",
-    GEMMA2_START_DOCSTRING,
-)
+    "The bare Gemma2 Model outputting raw hidden-states without any specific head on top.", GEMMA2_START_DOCSTRING)
+
 class Gemma2Model(Gemma2PreTrainedModel):
     """
     Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`Gemma2DecoderLayer`]
@@ -409,15 +363,8 @@ class Gemma2Model(Gemma2PreTrainedModel):
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
-        self.embed_tokens = nn.Embedding(
-            config.vocab_size, config.hidden_size, self.padding_idx
-        )
-        self.layers = nn.ModuleList(
-            [
-                Gemma2DecoderLayer(config, layer_idx)
-                for layer_idx in range(config.num_hidden_layers)
-            ]
-        )
+        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
+        self.layers = nn.ModuleList([Gemma2DecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)])
         self.norm = Gemma2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.gradient_checkpointing = False
 
@@ -439,11 +386,8 @@ class Gemma2Model(Gemma2PreTrainedModel):
         self.embed_tokens = value
 
     @add_start_docstrings_to_model_forward(GEMMA2_INPUTS_DOCSTRING)
-    def forward(
-        self,
-        input_ids,
-        cu_seqlens,
-    ):
+    def forward( self, input_ids, cu_seqlens,):
+        
         assert input_ids.size(0) == 1
         input_ids = input_ids.squeeze(0)
         inputs_embeds = self.embed_tokens(input_ids)
@@ -453,19 +397,12 @@ class Gemma2Model(Gemma2PreTrainedModel):
         # normalized
         # Gemma2 downcasts the below to float16, causing sqrt(3072)=55.4256 to become 55.5
         # See https://github.com/huggingface/transformers/pull/29402
-        normalizer = torch.tensor(
-            self.config.hidden_size**0.5, dtype=hidden_states.dtype
-        )
+        normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=hidden_states.dtype)
         hidden_states = hidden_states * normalizer
 
         for idx, decoder_layer in enumerate(self.layers):
             is_last_decoder_layer = idx == len(self.layers) - 1
-            layer_outputs = decoder_layer(
-                hidden_states,
-                cu_seqlens,
-                self.rotary_emb,
-                is_last_decoder_layer=is_last_decoder_layer,
-            )
+            layer_outputs = decoder_layer( hidden_states, cu_seqlens, self.rotary_emb, is_last_decoder_layer=is_last_decoder_layer)
 
             hidden_states = layer_outputs
 
@@ -473,14 +410,9 @@ class Gemma2Model(Gemma2PreTrainedModel):
 
         return hidden_states
 
-    def _update_causal_mask(
-        self,
-        attention_mask: torch.Tensor,
-        input_tensor: torch.Tensor,
-        cache_position: torch.Tensor,
-        past_key_values: Cache,
-        output_attentions: bool,
-    ):
+    def _update_causal_mask( self, attention_mask: torch.Tensor, input_tensor: torch.Tensor, cache_position: torch.Tensor, 
+                            past_key_values: Cache, output_attentions: bool):
+        '''
         # The _update_causal_mask function is typically used in transformer models to create and update the causal attention mask. 
         # This mask ensures that each token can only attend to previous tokens and itself, which is essential for autoregressive models like transformers used in language modeling.
 
@@ -496,7 +428,7 @@ class Gemma2Model(Gemma2PreTrainedModel):
         
         # Efficiency:
         # By updating the causal mask dynamically, the function ensures that the attention mechanism operates efficiently, avoiding unnecessary computations on padded tokens.
-        
+        '''
         
         if self.config._attn_implementation == "flash_attention_2":
             if attention_mask is not None and 0.0 in attention_mask:
@@ -509,47 +441,28 @@ class Gemma2Model(Gemma2PreTrainedModel):
         if past_key_values is not None:
             target_length = past_key_values.get_max_length()
         else:
-            target_length = (
-                attention_mask.shape[-1]
-                if attention_mask is not None
-                else input_tensor.shape[1]
-            )
+            target_length = (attention_mask.shape[-1] if attention_mask is not None else input_tensor.shape[1])
 
         if attention_mask is not None and attention_mask.dim() == 4:
             # in this case we assume that the mask comes already in inverted form and requires no inversion or slicing
             if attention_mask.max() != 0:
-                raise ValueError(
-                    "Custom 4D attention mask should be passed in inverted form with max==0`"
-                )
+                raise ValueError("Custom 4D attention mask should be passed in inverted form with max==0`")
             causal_mask = attention_mask
         else:
-            causal_mask = torch.full(
-                (sequence_length, target_length),
-                fill_value=min_dtype,
-                dtype=dtype,
-                device=device,
-            )
+            causal_mask = torch.full((sequence_length, target_length), fill_value=min_dtype, dtype=dtype, device=device)
+            
             if sequence_length != 1:
                 causal_mask = torch.triu(causal_mask, diagonal=1)
-            causal_mask *= torch.arange(
-                target_length, device=device
-            ) > cache_position.reshape(-1, 1)
-            causal_mask = causal_mask[None, None, :, :].expand(
-                input_tensor.shape[0], 1, -1, -1
-            )
+            
+            causal_mask *= torch.arange(target_length, device=device) > cache_position.reshape(-1, 1)
+            causal_mask = causal_mask[None, None, :, :].expand(input_tensor.shape[0], 1, -1, -1)
+            
             if attention_mask is not None:
-                causal_mask = (
-                    causal_mask.clone()
-                )  # copy to contiguous memory for in-place edit
+                causal_mask = (causal_mask.clone())  # copy to contiguous memory for in-place edit
                 mask_length = attention_mask.shape[-1]
-                padding_mask = (
-                    causal_mask[:, :, :, :mask_length]
-                    + attention_mask[:, None, None, :]
-                )
+                padding_mask = (causal_mask[:, :, :, :mask_length] + attention_mask[:, None, None, :])
                 padding_mask = padding_mask == 0
-                causal_mask[:, :, :, :mask_length] = causal_mask[
-                    :, :, :, :mask_length
-                ].masked_fill(padding_mask, min_dtype)
+                causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(padding_mask, min_dtype)
         return causal_mask
 
 
@@ -573,13 +486,13 @@ class Gemma2ForSequenceClassification(Gemma2PreTrainedModel):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.model = Gemma2Model(config)
+        
         self.score = nn.Sequential(
-            nn.Dropout(0.1),
-            nn.Linear(config.hidden_size, config.hidden_size // 2),
-            nn.Dropout(0.1),
-            nn.GELU(),
-            nn.Linear(config.hidden_size // 2, 3),
-        )
+                                    nn.Dropout(0.1), 
+                                    nn.Linear(config.hidden_size, config.hidden_size // 2),
+                                    nn.Dropout(0.1),
+                                    nn.GELU(),
+                                    nn.Linear(config.hidden_size // 2, 3),)
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -591,15 +504,8 @@ class Gemma2ForSequenceClassification(Gemma2PreTrainedModel):
         self.model.embed_tokens = value
 
     @add_start_docstrings_to_model_forward(GEMMA2_INPUTS_DOCSTRING)
-    def forward(
-        self,
-        input_ids,
-        cu_seqlens,
-    ):
-        transformer_outputs = self.model(
-            input_ids,
-            cu_seqlens,
-        )
+    def forward( self, input_ids, cu_seqlens,):
+        transformer_outputs = self.model(input_ids, cu_seqlens)
         hidden_states = transformer_outputs
         # last_token_inds = cu_seqlens[1:] - 1
         # hidden_states = hidden_states[0][last_token_inds]
