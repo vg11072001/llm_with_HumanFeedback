@@ -3,7 +3,9 @@
 <!-- ![Cute roots](asset/assest1.svg) -->
 <!--![c](asset/frontbanner.png)-->
 <!--![](bannerforfinetuningproj.jpg)-->
-![](config-workflow.jpg)
+![](asset/config-workflow.jpg)
+
+
 ## Contents
 - [Benchmarking gemma2-9b Efficiency Across Fine-Tuning Techniques](#benchmarking-gemma2-9b-efficiency-across-fine-tuning-techniques)
   - [Contents](#contents)
