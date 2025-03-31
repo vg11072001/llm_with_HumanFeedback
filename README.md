@@ -3,7 +3,7 @@
 <!-- ![Cute roots](asset/assest1.svg) -->
 <!--![c](asset/frontbanner.png)-->
 <!--![](bannerforfinetuningproj.jpg)-->
-![](asset/config-workflow.jpg)
+![](asset/config-workflow3.jpg)
 
 
 ## Contents
