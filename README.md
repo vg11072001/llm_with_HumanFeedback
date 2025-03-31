@@ -78,40 +78,131 @@ betweenaUserandtwoAssistants|><end_of_turn><start_of_turn>modelverdictis:[[
 ```
 
 
-### Model Architecture
+### Train Model Architecture
 
-
+How . Why . What. Alternative
 
 ```json
-GemmaForCausalLM(
-  (model): GemmaModel(
-    (embed_tokens): Embedding(256000, 3072, padding_idx=0)
-    (layers): ModuleList(
-      (0-27): 28 x GemmaDecoderLayer(
-        (self_attn): GemmaSdpaAttention(
-          (q_proj): Linear(in_features=3072, out_features=4096, bias=False)
-          (k_proj): Linear(in_features=3072, out_features=4096, bias=False)
-          (v_proj): Linear(in_features=3072, out_features=4096, bias=False)
-          (o_proj): Linear(in_features=4096, out_features=3072, bias=False)
-          (rotary_emb): GemmaRotaryEmbedding()
+Gemma2ForSequenceClassification
+(
+  (model): Gemma2Model
+  (
+    (embed_tokens): Embedding(vocab_size = 256000, hidden_size = 2304, padding_idx=0)
+    (layers): ModuleList
+    (rotary_emb): rotary_emb(head_dim = 256, max_position_embeddings = 8192, emb_shape =)
+    (
+      (0-25): 26 x Gemma2DecoderLayer
+       (input_layernorm): GemmaRMSNorm()
+	   (
+        (self_attn): Gemma2Attention(
+          (q_proj): Linear(in_features=2304, out_features=(num_attention_heads=8)*(head_dim=256), bias=False)
+          (k_proj): Linear(in_features=2304, out_features=(num_key_value_heads=4)*(head_dim=256), bias=False)
+          (v_proj): Linear(in_features=2304, out_features=(num_key_value_heads=4)*(head_dim=256), bias=False)
+          (o_proj): Linear(in_features=(num_attention_heads=8)*(head_dim=256), out_features=2304, bias=False)
+          (query_states): GemmaRotaryEmbedding(rotary_emb)
+          (key_states): GemmaRotaryEmbedding(rotary_emb)
+          (window_size): sliding_window=4096
+          (attn_output): flash_attn_varlen_func
+          (
+	        query_states, key_states, value_states,
+	        cu_seqlens_q, cu_seqlens_k,
+	        max_seqlens_q, max_seqlens_k,
+	        dropout, sofmax_scale((query_pre_attn_scalar=256)**-0.5), casual, window_size, 
+	        softcap(attn_logit_softcapping=50) 
+          )
         )
-        (mlp): GemmaMLP(
-          (gate_proj): Linear(in_features=3072, out_features=24576, bias=False)
-          (up_proj): Linear(in_features=3072, out_features=24576, bias=False)
-          (down_proj): Linear(in_features=24576, out_features=3072, bias=False)
-          (act_fn): PytorchGELUTanh()
-        )
-        (input_layernorm): GemmaRMSNorm()
-        (post_attention_layernorm): GemmaRMSNorm()
-      )
+       (post_attention_layernorm): GemmaRMSNorm()
+       
+       hidden_states =  residual + hidden_states
+       
+       (pre_feedforward_layernorm): GemmaRMSNorm()
+	   (mlp): GemmaMLP
+	   (
+          (gate_proj): Linear(in_features=2304, out_features=(intermediate_size=9216), bias=False)
+          (up_proj): Linear(in_features=2304, out_features=(intermediate_size=9216), bias=False)
+          (down_proj): Linear(in_features=(intermediate_size=9216), out_features=2304, bias=False)
+          (act_fn): ACT2FN(hidden_activation="gelu_pytorch_tanh")
+          (out):down_proj(act_fn(gate_proj(x))* up_proj(x))
+	   )
+        (post_feedforward_layernorm): GemmaRMSNorm()
+	
+		hidden_states =  residual + hidden_states
+     )
     )
-    (norm): GemmaRMSNorm()
+    (norm): GemmaRMSNorm(in_features = 2304, eps = 1e-6)
+    (gradient_checkpointing): False
+    (causal_mask): _update_causal_mask()
   )
-  (lm_head): Linear(in_features=3072, out_features=256000, bias=False)
+  (score): Sequential(
+	  (0): Dropout(p=0.1, inplace=False)
+	  (1): Linear(in_features=2304, out_features=2304/2, bias=True)
+	  (2): Dropout(p=0.1, inplace=False)
+	  (3): GELU()
+	  (4): Linear(in_features=2304/2, out_features=3, bias=True)
+  (logits): score
 )
 
 ```
 
+#### Optimization step 1 
+
+#instead of Gemma2RotaryEmbedding
+- 
+
+#used rotary embedding from transformer Engine:
+- initialized with `rotary_emb` calculated using head dim and max position embedding 
+- used optimized one from transformer engine
+
+```python
+query_states = te.attention.FusedRoPEFunc.apply(query_states, rotary_emb, "thd", cu_seqlns)       
+key_states = te.attention.FusedRoPEFunc.apply(key_states, rotary_emb, "thd", cu_seqlens)
+```
+
+#### Optimization step 2
+
+#instead of Gemma2SdpaAttention:
+
+```json
+(self_attn): Gemma2SdpaAttention(
+          (q_proj): Linear(in_features=3584, out_features=4096, bias=False)
+          (k_proj): Linear(in_features=3584, out_features=2048, bias=False)
+          (v_proj): Linear(in_features=3584, out_features=2048, bias=False)
+          (o_proj): Linear(in_features=4096, out_features=3584, bias=False)
+          (rotary_emb): Gemma2RotaryEmbedding()
+        )
+```
+
+#used Gemma2Attension where flash attention with variable length function
+
+
+#### Use Case step 1
+
+#instead Casual LM
+ 
+#used Sequential for classification
+
+
+#### Use Case step 2
+
+#instead normal update_causal_mask
+- uses normal gemma2 with static cache
+
+#used _update_causal_mask_ 
+
+ * The _update_causal_mask_ function is typically used in transformer models to create and update the causal attention mask.
+ * This mask ensures that each token can only attend to previous tokens and itself, which is essential for autoregressive models like transformers used in language modeling.
+
+ Role of _update_causal_mask_:
+ 1. Causal Masking:
+- The primary role of _update_causal_mask_ is to create a causal mask that prevents tokens from attending to future tokens.
+ - This is crucial for autoregressive models where the prediction of the next token should only depend on the current and previous tokens.
+
+ 2. Handling Variable-Length Sequences:
+-  The function can handle variable-length sequences by ensuring that the mask correctly reflects the boundaries of each sequence within a batch.
+ - This is particularly useful when dealing with packed sequences.
+
+ 3. Efficiency:
+ - By updating the causal mask dynamically, the function ensures that the attention mechanism operates efficiently, avoiding unnecessary computations on padded tokens.
 ### Experiments list
 
 - [ ] document full chart and finesetup and inference setup on local
