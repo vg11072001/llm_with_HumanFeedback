@@ -1,4 +1,4 @@
-# Benchmarking gemma2-9b Efficiency Across Fine-Tuning Techniques
+# Efficiently Fine-Tuning LLM Techniques
 
 <!-- ![Cute roots](asset/assest1.svg) -->
 <!--![c](asset/frontbanner.png)-->
@@ -7,9 +7,16 @@
 
 
 ## Contents
-- [Benchmarking gemma2-9b Efficiency Across Fine-Tuning Techniques](#benchmarking-gemma2-9b-efficiency-across-fine-tuning-techniques)
+- [Efficiently Fine-Tuning LLM Techniques](#efficiently-fine-tuning-llm-techniques)
   - [Contents](#contents)
     - [Dataset Config Workflow](#dataset-config-workflow)
+    - [Train Model Architecture](#train-model-architecture)
+      - [Optimization step 1](#optimization-step-1)
+      - [Optimization step 2](#optimization-step-2)
+      - [Use Case step 1](#use-case-step-1)
+      - [Use Case step 2](#use-case-step-2)
+      - [Use Case step 3](#use-case-step-3)
+    - [Config Setup](#config-setup)
     - [Experiments list](#experiments-list)
   - [Inspiration](#inspiration)
 
@@ -80,7 +87,6 @@ betweenaUserandtwoAssistants|><end_of_turn><start_of_turn>modelverdictis:[[
 
 ### Train Model Architecture
 
-How . Why . What. Alternative
 
 ```python
 Gemma2ForSequenceClassification
@@ -146,8 +152,9 @@ Gemma2ForSequenceClassification
 
 #### Optimization step 1 
 
+
 #instead of Gemma2RotaryEmbedding
-- 
+- rotary embedding used in standard from transformers package
 
 #used rotary embedding from transformer Engine:
 - initialized with `rotary_emb` calculated using head dim and max position embedding 
@@ -203,16 +210,64 @@ key_states = te.attention.FusedRoPEFunc.apply(key_states, rotary_emb, "thd",
 
  3. Efficiency:
  - By updating the causal mask dynamically, the function ensures that the attention mechanism operates efficiently, avoiding unnecessary computations on padded tokens.
+
+#### Use Case step 3
+
+#instead sliding window transformer logic
+
+#used sliding window for flash attention with variable length
+
+```python
+        # disable sliding window in case T4 sdpa implementation does not support it
+        # our max input length is slightly longer than 4096
+	    # sliding_window is set for 4096 ( its a max length our dataset processing )
+        if sliding_window == -1:
+            sliding_window = None
+        else:
+            sliding_window = sliding_window if not bool(layer_idx % 2) else None
+
+
+        if sliding_window:
+            window_size = (sliding_window, sliding_window)
+        else:
+            window_size = (-1, -1)
+```
+
+
+
+### Config Setup
+
+![](asset/config_workflow1.png)
+
+
 ### Experiments list
 
-- [ ] document full chart and finesetup and inference setup on local
+- [ ] document full chart and fine setup and inference setup on local
 - [ ] Model architecture:
   - [ ] Gemma2-9b LLMs from scratch for small dataset
   - [ ] alternative for Collators used in model its have some limitations
   - [ ] https://www.kaggle.com/code/emiz6413/inference-gemma-2-9b-4-bit-qlora
   - [ ] https://www.kaggle.com/code/emiz6413/training-gemma-2-9b-4-bit-qlora-fine-tuning?scriptVersionId=187770530
-  
+
 <!-- 
+last i had updated and understood code till the attention middway after rope code need to complete
+
+LIST DOWN all the parameters/ optimizations techniques I'm using in this to have custom pipline
+
+Base image of model and its constructors
+
+1. Flash attention
+1.1 flash attention with variable length
+2. Transformer engine fusions
+3. Weights decays, gradient clipping
+4. optimizers schedules
+
+5. GPU why i chooses this gpus, and understand its architecture
+
+etc. check out the example and points from Andrej 4 hr video of GPT 2!
+
+
+
   - [ ] Gemma 2 Fine Tuning for Dummies (with 16k, 32k,... Context) [Full Tutorial] [link](https://www.youtube.com/watch?v=EE-nEecm3Wo)
   - [ ] Github Gemma fine tune [link](https://github.com/nodematiclabs/gemma-fine-tune)
   - [ ] Copy of MOSLEH_finetune_gemma2_DEMO.ipynb [ colablink](https://colab.research.google.com/drive/1jN0gS1Yu19yQRpyJZ-MKIuVAY4zP13Pt)
