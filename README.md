@@ -10,13 +10,17 @@
 - [Efficiently Fine-Tuning LLM Techniques](#efficiently-fine-tuning-llm-techniques)
   - [Contents](#contents)
     - [Dataset Config Workflow](#dataset-config-workflow)
+      - [Optimization Data processing 1 : collators](#optimization-data-processing-1--collators)
     - [Train Model Architecture](#train-model-architecture)
-      - [Optimization step 1](#optimization-step-1)
-      - [Optimization step 2](#optimization-step-2)
-      - [Use Case step 1](#use-case-step-1)
-      - [Use Case step 2](#use-case-step-2)
-      - [Use Case step 3](#use-case-step-3)
-    - [Config Setup](#config-setup)
+      - [Optimization step 1 : Rotary Embeddings](#optimization-step-1--rotary-embeddings)
+      - [Optimization step 2 : Attention Layer](#optimization-step-2--attention-layer)
+      - [Use Case step 1 : Classification task](#use-case-step-1--classification-task)
+      - [Use Case step 2 : Causal Mask](#use-case-step-2--causal-mask)
+      - [Use Case step 3 : Sliding Window](#use-case-step-3--sliding-window)
+    - [Model Initialization](#model-initialization)
+    - [Training Pipeline Config Setup](#training-pipeline-config-setup)
+      - [Training step 1 : Optimizers](#training-step-1--optimizers)
+      - [Training step 2 : Loss](#training-step-2--loss)
     - [Experiments list](#experiments-list)
   - [Inspiration](#inspiration)
 
@@ -84,6 +88,13 @@ betweenaUserandtwoAssistants|><end_of_turn><start_of_turn>modelverdictis:[[
 ------------------------------
 ```
 
+#### Optimization Data processing 1 : collators
+
+#instead standard data loading
+
+#used used `cu_seqlens`
+- create a dataset with cumulative sequence lengths , to deal with each input sample having variable length
+
 
 ### Train Model Architecture
 
@@ -150,7 +161,7 @@ Gemma2ForSequenceClassification
 
 ```
 
-#### Optimization step 1 
+#### Optimization step 1 : Rotary Embeddings
 
 
 #instead of Gemma2RotaryEmbedding
@@ -165,7 +176,7 @@ query_states = te.attention.FusedRoPEFunc.apply(query_states, rotary_emb, "t
 key_states = te.attention.FusedRoPEFunc.apply(key_states, rotary_emb, "thd", cu_seqlens)
 ```
 
-#### Optimization step 2
+#### Optimization step 2 : Attention Layer
 
 #instead of Gemma2SdpaAttention:
 
@@ -180,16 +191,16 @@ key_states = te.attention.FusedRoPEFunc.apply(key_states, rotary_emb, "thd",
 ```
 
 #used Gemma2Attension where flash attention with variable length function
+- it supports soft capping, as used in gemma2 model
 
-
-#### Use Case step 1
+#### Use Case step 1 : Classification task
 
 #instead Casual LM
  
 #used Sequential for classification
 
 
-#### Use Case step 2
+#### Use Case step 2 : Causal Mask
 
 #instead normal update_causal_mask
 - uses normal gemma2 with static cache
@@ -211,7 +222,7 @@ key_states = te.attention.FusedRoPEFunc.apply(key_states, rotary_emb, "thd",
  3. Efficiency:
  - By updating the causal mask dynamically, the function ensures that the attention mechanism operates efficiently, avoiding unnecessary computations on padded tokens.
 
-#### Use Case step 3
+#### Use Case step 3 : Sliding Window
 
 #instead sliding window transformer logic
 
@@ -233,12 +244,44 @@ key_states = te.attention.FusedRoPEFunc.apply(key_states, rotary_emb, "thd",
             window_size = (-1, -1)
 ```
 
+### Model Initialization
 
+-  _init_weights_ for both type of module, in a gaussian distribution from gemma2config
+- std =  0.2 # `initializer_range`
+- i added whichever module we have `nn.Linear` or `nn.Embedding` get initialize same normal distribution weights and and handles the padding index by filling zero for embeddings appropriately.
 
-### Config Setup
+### Training Pipeline Config Setup
 
 ![](asset/config_workflow1.png)
 
+
+#### Training step 1 : Optimizers
+
+#instead optimizers used in all pipeline in Transformer package
+
+
+#used  any precision Adam Weights Optimizers
+
+- optimizer is instantiated with the specified hyperparameters. with mixed precision level support
+- Kahan summation is a technique used to reduce numerical errors in floating-point arithmetic (for numeric stablility)
+- used with learning rate update on scheduler
+
+#### Training step 2 : Loss 
+
+#used  Log Loss Buffer
+
+- an efficient way to store and compute the mean of log loss values using a circular buffer.
+- particularly useful in training loops where need to track the loss over time and compute running averages `mean`  without storing an ever-growing list of values.
+
+#### Training step 3 : Cross Entropy
+
+#used 
+- loss is a measure of the difference between the predicted probability distribution and the true probability distribution.
+
+#### Evaluation step 4 : Classification 
+
+#used 
+- F1 score for valuating the training and validating the output dataset
 
 ### Experiments list
 
